@@ -73,6 +73,10 @@ impl LlmEngine for RemoteHttpLlmEngine {
         );
         spin_telemetry::inject_trace_context(&mut headers);
 
+        spin_telemetry::counter!(spin.llm_infer_count = 1, metric_attribute = "llm-infer");
+
+        spin_telemetry::monotonic_counter!(spin.llm_infer_count = 1, metric_attribute = "llm-infer");
+        
         let inference_options = InferRequestBodyParams {
             max_tokens: params.max_tokens,
             repeat_penalty: params.repeat_penalty,
