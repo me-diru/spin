@@ -12,7 +12,7 @@ spin-core = { path = "../core" }
 spin-world = { path = "../world" }
 tracing = { workspace = true }
 table = { path = "../table" }
-redis = { version = "0.21", features = ["tokio-comp", "tokio-native-tls-comp", "aio"] }
+redis = { version = "0.25", features = ["tokio-comp", "tokio-native-tls-comp", "aio"] }
 
 
 [dev-dependencies]
@@ -20,6 +20,7 @@ spin-factors-test = { path = "../factors-test" }
 tokio = { version = "1", features = ["macros", "rt"] }
 spin-factor-variables = { path = "../factor-variables" }
 spin-factor-wasi = { path = "../factor-wasi" }
+redis-test = {version = "0.4.0"}
 
 # wasmtime-wasi-http = { workspace = true }
 [lints]

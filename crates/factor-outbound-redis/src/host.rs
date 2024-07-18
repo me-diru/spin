@@ -1,5 +1,5 @@
 use anyhow::Result;
-use redis::{aio::Connection, AsyncCommands, FromRedisValue, Value};
+use redis::{aio::Connection, AsyncCommands, FromRedisValue, Value, ConnectionLike};
 use spin_core::{async_trait, wasmtime::component::Resource};
 use spin_factor_outbound_networking::OutboundAllowedHosts;
 use spin_world::v1::{redis as v1, redis_types};
@@ -7,12 +7,34 @@ use spin_world::v2::redis::{
     self as v2, Connection as RedisConnection, Error, RedisParameter, RedisResult,
 };
 use tracing::{instrument, Level};
+use redis_test::{MockRedisConnection, MockCmd};
 
 pub struct InstanceState {
     pub allowed_hosts: OutboundAllowedHosts,
-    pub connections: table::Table<Connection>,
+    pub connections: table::Table<Box<dyn ConnectionLike + Send>>,
 }
 
+// pub trait Mockable {
+//     async fn establish_mock_connection(
+//         &mut self,
+//         address: String,
+//     ) -> Result<Resource<Box< dyn ConnectionLike>>, Error>;
+// }
+
+
+// impl Mockable for InstanceState {
+//     async fn establish_mock_connection(
+//             &mut self,
+//             address: String,
+//         ) -> Result<Resource<Box< dyn ConnectionLike>>, Error> {
+//         let mock_conn = MockRedisConnection::new(vec![
+//     MockCmd::new(redis::cmd("EXISTS").arg("foo"), Ok("1")),]);
+//     self.connections
+//     .push(mock_conn)
+//     .map(Resource::new_own)
+//     .map_err(|_| Error::TooManyConnections)
+//     }
+// }
 impl InstanceState {
     async fn is_address_allowed(&self, address: &str) -> Result<bool> {
         self.allowed_hosts.check_url(address, "redis").await
@@ -21,7 +43,7 @@ impl InstanceState {
     async fn establish_connection(
         &mut self,
         address: String,
-    ) -> Result<Resource<RedisConnection>, Error> {
+    ) -> Result<Resource<Box< dyn ConnectionLike>>, Error> {
         let conn = redis::Client::open(address.as_str())
             .map_err(|_| Error::InvalidAddress)?
             .get_async_connection()
@@ -35,7 +57,7 @@ impl InstanceState {
 
     async fn get_conn(
         &mut self,
-        connection: Resource<RedisConnection>,
+        connection: Resource<Box< dyn ConnectionLike>>,
     ) -> Result<&mut Connection, Error> {
         self.connections
             .get_mut(connection.rep())
@@ -54,7 +76,7 @@ impl v2::Host for crate::InstanceState {
 #[async_trait]
 impl v2::HostConnection for crate::InstanceState {
     #[instrument(name = "spin_outbound_redis.open_connection", skip(self), err(level = Level::INFO), fields(otel.kind = "client", db.system = "redis"))]
-    async fn open(&mut self, address: String) -> Result<Resource<RedisConnection>, Error> {
+    async fn open(&mut self, address: String) -> Result<Resource<Box< dyn ConnectionLike>>, Error> {
         if !self
             .is_address_allowed(&address)
             .await
@@ -69,7 +91,7 @@ impl v2::HostConnection for crate::InstanceState {
     #[instrument(name = "spin_outbound_redis.publish", skip(self, connection, payload), err(level = Level::INFO), fields(otel.kind = "client", db.system = "redis", otel.name = format!("PUBLISH {}", channel)))]
     async fn publish(
         &mut self,
-        connection: Resource<RedisConnection>,
+        connection: Resource<Box< dyn ConnectionLike>>,
         channel: String,
         payload: Vec<u8>,
     ) -> Result<(), Error> {
@@ -83,7 +105,7 @@ impl v2::HostConnection for crate::InstanceState {
     #[instrument(name = "spin_outbound_redis.get", skip(self, connection), err(level = Level::INFO), fields(otel.kind = "client", db.system = "redis", otel.name = format!("GET {}", key)))]
     async fn get(
         &mut self,
-        connection: Resource<RedisConnection>,
+        connection: Resource<Box< dyn ConnectionLike>>,
         key: String,
     ) -> Result<Option<Vec<u8>>, Error> {
         let conn = self.get_conn(connection).await.map_err(other_error)?;
@@ -94,7 +116,7 @@ impl v2::HostConnection for crate::InstanceState {
     #[instrument(name = "spin_outbound_redis.set", skip(self, connection, value), err(level = Level::INFO), fields(otel.kind = "client", db.system = "redis", otel.name = format!("SET {}", key)))]
     async fn set(
         &mut self,
-        connection: Resource<RedisConnection>,
+        connection: Resource<Box< dyn ConnectionLike>>,
         key: String,
         value: Vec<u8>,
     ) -> Result<(), Error> {
@@ -106,7 +128,7 @@ impl v2::HostConnection for crate::InstanceState {
     #[instrument(name = "spin_outbound_redis.incr", skip(self, connection), err(level = Level::INFO), fields(otel.kind = "client", db.system = "redis", otel.name = format!("INCRBY {} 1", key)))]
     async fn incr(
         &mut self,
-        connection: Resource<RedisConnection>,
+        connection: Resource<Box< dyn ConnectionLike>>,
         key: String,
     ) -> Result<i64, Error> {
         let conn = self.get_conn(connection).await.map_err(other_error)?;
@@ -117,7 +139,7 @@ impl v2::HostConnection for crate::InstanceState {
     #[instrument(name = "spin_outbound_redis.del", skip(self, connection), err(level = Level::INFO), fields(otel.kind = "client", db.system = "redis", otel.name = format!("DEL {}", keys.join(" "))))]
     async fn del(
         &mut self,
-        connection: Resource<RedisConnection>,
+        connection: Resource<Box< dyn ConnectionLike>>,
         keys: Vec<String>,
     ) -> Result<u32, Error> {
         let conn = self.get_conn(connection).await.map_err(other_error)?;
@@ -128,7 +150,7 @@ impl v2::HostConnection for crate::InstanceState {
     #[instrument(name = "spin_outbound_redis.sadd", skip(self, connection, values), err(level = Level::INFO), fields(otel.kind = "client", db.system = "redis", otel.name = format!("SADD {} {}", key, values.join(" "))))]
     async fn sadd(
         &mut self,
-        connection: Resource<RedisConnection>,
+        connection: Resource<Box< dyn ConnectionLike>>,
         key: String,
         values: Vec<String>,
     ) -> Result<u32, Error> {
@@ -146,7 +168,7 @@ impl v2::HostConnection for crate::InstanceState {
     #[instrument(name = "spin_outbound_redis.smembers", skip(self, connection), err(level = Level::INFO), fields(otel.kind = "client", db.system = "redis", otel.name = format!("SMEMBERS {}", key)))]
     async fn smembers(
         &mut self,
-        connection: Resource<RedisConnection>,
+        connection: Resource<Box< dyn ConnectionLike>>,
         key: String,
     ) -> Result<Vec<String>, Error> {
         let conn = self.get_conn(connection).await.map_err(other_error)?;
@@ -157,7 +179,7 @@ impl v2::HostConnection for crate::InstanceState {
     #[instrument(name = "spin_outbound_redis.srem", skip(self, connection, values), err(level = Level::INFO), fields(otel.kind = "client", db.system = "redis", otel.name = format!("SREM {} {}", key, values.join(" "))))]
     async fn srem(
         &mut self,
-        connection: Resource<RedisConnection>,
+        connection: Resource<Box< dyn ConnectionLike>>,
         key: String,
         values: Vec<String>,
     ) -> Result<u32, Error> {
@@ -169,7 +191,7 @@ impl v2::HostConnection for crate::InstanceState {
     #[instrument(name = "spin_outbound_redis.execute", skip(self, connection), err(level = Level::INFO), fields(otel.kind = "client", db.system = "redis", otel.name = format!("{}", command)))]
     async fn execute(
         &mut self,
-        connection: Resource<RedisConnection>,
+        connection: Resource<Box< dyn ConnectionLike>>,
         command: String,
         arguments: Vec<RedisParameter>,
     ) -> Result<Vec<RedisResult>, Error> {
@@ -190,7 +212,7 @@ impl v2::HostConnection for crate::InstanceState {
             .map_err(other_error)
     }
 
-    fn drop(&mut self, connection: Resource<RedisConnection>) -> anyhow::Result<()> {
+    fn drop(&mut self, connection: Resource<Box< dyn ConnectionLike>>) -> anyhow::Result<()> {
         self.connections.remove(connection.rep());
         Ok(())
     }

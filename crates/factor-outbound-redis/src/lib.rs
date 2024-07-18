@@ -45,9 +45,4 @@ impl Factor for OutboundRedisFactor {
     }
 }
 
-<<<<<<< HEAD
-=======
-
-
->>>>>>> efd20868 (Add outbound redis factors unit test)
 impl SelfInstanceBuilder for InstanceState {}
